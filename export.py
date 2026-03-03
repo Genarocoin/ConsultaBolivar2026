@@ -20,7 +20,7 @@ from openpyxl.chart import DoughnutChart, Reference
 
 export_bp = Blueprint('export', __name__)
 
-# Usar la misma configuración de DB que app.py
+# Configuración de base de datos para Render
 if os.environ.get('RENDER'):
     DATABASE = '/tmp/elecciones.db'
 else:
@@ -31,4 +31,19 @@ ROJO     = '#D7263D'
 AZUL     = '#1B4F9B'
 AMARILLO = '#F5A623'
 
-# ... (resto del código de export.py igual) ...
+RL_AZUL     = colors.HexColor(AZUL)
+RL_ROJO     = colors.HexColor(ROJO)
+RL_AMARILLO = colors.HexColor(AMARILLO)
+RL_GRIS     = colors.HexColor('#F4F6FB')
+RL_BLANCO   = colors.white
+
+def _fetch_data():
+    db = sqlite3.connect(DATABASE)
+    db.row_factory = sqlite3.Row
+    rows = db.execute(
+        "SELECT name, empleados, votos_reportados FROM secretarias ORDER BY name"
+    ).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+# ... (el resto del código de export.py sigue igual) ...
