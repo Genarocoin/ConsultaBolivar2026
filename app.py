@@ -13,8 +13,12 @@ else:
     DATABASE = 'elecciones.db'
 
 # Registrar Blueprint de exportación
-from export import export_bp
-app.register_blueprint(export_bp)
+try:
+    from export import export_bp
+    app.register_blueprint(export_bp)
+    print("✅ Blueprint de exportación registrado correctamente")
+except Exception as e:
+    print(f"❌ Error registrando blueprint: {e}")
 
 # ──────────────────────────────────────────────
 # DATOS INICIALES
@@ -107,7 +111,22 @@ def close_connection(exception):
         db.close()
 
 # ──────────────────────────────────────────────
-# RUTAS
+# RUTAS DE PRUEBA
+# ──────────────────────────────────────────────
+@app.route('/test')
+def test():
+    return "✅ La aplicación está funcionando correctamente"
+
+@app.route('/test-export')
+def test_export():
+    try:
+        from export import export_bp
+        return f"✅ Blueprint encontrado: {export_bp.name}"
+    except Exception as e:
+        return f"❌ Error: {str(e)}"
+
+# ──────────────────────────────────────────────
+# RUTAS PRINCIPALES
 # ──────────────────────────────────────────────
 @app.route('/')
 def index():
