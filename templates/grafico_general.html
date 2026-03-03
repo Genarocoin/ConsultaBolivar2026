@@ -1,0 +1,122 @@
+<!-- templates/grafico_general.html -->
+{% extends "base.html" %}
+{% block title %}Gráfico General · Consulta Popular 2026{% endblock %}
+
+{% block head_extra %}
+<style>
+    .pg-title     { text-align:center; margin-bottom:1.5rem; }
+    .pg-title h1  { font-size:1.7rem; font-weight:900; color:var(--azul); text-transform:uppercase; }
+    .pg-title p   { color:var(--rojo); font-weight:600; font-size:.95rem; margin-top:.25rem; }
+    .accent-line  { height:4px; width:80px; border-radius:2px;
+                    background:linear-gradient(90deg,var(--rojo),var(--amarillo),var(--azul));
+                    margin:.5rem auto 0; }
+
+    .stats-grid   { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1rem; margin-bottom:1.5rem; text-align:center; }
+    .stat         { padding:1.2rem .75rem; border-radius:.75rem; font-weight:700; font-size:.9rem; }
+    .stat span    { display:block; font-size:2.2rem; font-weight:900; margin-top:.25rem; }
+    .st-total  { background:#e8f5e9; color:var(--verde);    border:2px solid var(--verde); }
+    .st-voted  { background:#fde8eb; color:var(--rojo);     border:2px solid var(--rojo); }
+    .st-remain { background:#e8eef9; color:var(--azul);     border:2px solid var(--azul); }
+
+    .pct-big  { text-align:center; font-size:3.5rem; font-weight:900; color:var(--amarillo);
+                text-shadow:0 2px 8px rgba(0,0,0,.12); margin:1rem 0; }
+    .pct-big small { display:block; font-size:1rem; color:#555; font-weight:600; }
+
+    .chart-wrap   { position:relative; height:360px; }
+
+    .export-btns  { display:flex; gap:1rem; justify-content:center; flex-wrap:wrap; margin-top:1.5rem; }
+    .btn-exp {
+        padding: .8rem 1.8rem;
+        border-radius: .6rem;
+        font-weight: 700;
+        text-decoration: none;
+        font-size: .95rem;
+        transition: transform .2s, box-shadow .2s;
+        display: inline-flex;
+        align-items: center;
+        gap: .4rem;
+    }
+    .btn-exp:hover { transform:translateY(-3px); box-shadow:0 6px 16px rgba(0,0,0,.2); }
+    .btn-pdf   { background:var(--rojo);  color:#fff; box-shadow:0 3px 10px rgba(215,38,61,.3); }
+    .btn-excel { background:#27AE60;       color:#fff; box-shadow:0 3px 10px rgba(39,174,96,.3); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pg-title">
+    <h1>Gráfico General de Participación</h1>
+    <p>Consulta Popular Nacional 2026</p>
+    <div class="accent-line"></div>
+</div>
+
+<div class="card">
+    <div class="stats-grid">
+        <div class="stat st-total">
+            Total Empleados
+            <span>{{ total_empleados }}</span>
+        </div>
+        <div class="stat st-voted">
+            Ya Votaron
+            <span>{{ total_votos_reportados }}</span>
+        </div>
+        <div class="stat st-remain">
+            Faltan
+            <span>{{ votos_faltantes }}</span>
+        </div>
+    </div>
+
+    <div class="pct-big">
+        {% if total_empleados > 0 %}
+            {{ "%.1f"|format(total_votos_reportados / total_empleados * 100) }}%
+        {% else %}0%{% endif %}
+        <small>de participación total</small>
+    </div>
+
+    <div class="chart-wrap">
+        <canvas id="generalChart"></canvas>
+    </div>
+
+    <!-- Botones de exportación -->
+    <div class="export-btns">
+        <a href="/export/pdf"   class="btn-exp btn-pdf">📄 Descargar PDF</a>
+        <a href="/export/excel" class="btn-exp btn-excel">📊 Descargar Excel</a>
+    </div>
+
+    <div style="text-align:center;">
+        <a href="/" class="btn-back">← Volver al Menú Principal</a>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const tv = {{ total_votos_reportados }};
+    const tf = {{ votos_faltantes }};
+    const te = {{ total_empleados }};
+    const pv = te > 0 ? (tv/te*100).toFixed(1) : 0;
+    const pf = te > 0 ? (tf/te*100).toFixed(1) : 0;
+
+    new Chart(document.getElementById('generalChart').getContext('2d'), {
+        type: 'doughnut',
+        data: {
+            labels: [`Ya Votaron: ${tv} (${pv}%)`, `Faltan: ${tf} (${pf}%)`],
+            datasets: [{
+                data: [tv, tf],
+                backgroundColor: ['#27AE60','#D7263D'],
+                hoverOffset: 6,
+                borderWidth: 3
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { font:{ size:14 }, padding:20 }
+                }
+            }
+        }
+    });
+});
+</script>
+{% endblock %}
