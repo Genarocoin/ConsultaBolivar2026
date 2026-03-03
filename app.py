@@ -6,9 +6,9 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# Configuración de base de datos
+# Configuración de base de datos para Render
 if os.environ.get('RENDER'):
-    DATABASE = '/tmp/elecciones.db'  # Render permite escritura en /tmp
+    DATABASE = '/tmp/elecciones.db'
 else:
     DATABASE = 'elecciones.db'
 
@@ -46,60 +46,52 @@ SECRETARIAS_INICIALES = [
 ]
 
 # ──────────────────────────────────────────────
-# FUNCIÓN DE INICIALIZACIÓN (se ejecuta al arrancar)
+# INICIALIZAR BASE DE DATOS (se ejecuta al arrancar)
 # ──────────────────────────────────────────────
-def init_database():
-    """Inicializa la base de datos al arrancar la aplicación"""
-    print(f"Inicializando base de datos en: {DATABASE}")
+def init_db():
+    """Crea la base de datos si no existe"""
+    print(f"Inicializando BD en: {DATABASE}")
     
-    # Conectar y crear tablas
+    # Conectar y crear estructura
     conn = sqlite3.connect(DATABASE)
-    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    # Verificar si la tabla existe
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='secretarias'")
-    if not cursor.fetchone():
-        print("Tablas no encontradas. Creando base de datos...")
+    # Crear tablas
+    cursor.executescript("""
+        DROP TABLE IF EXISTS secretarias;
+        DROP TABLE IF EXISTS voto_history;
         
-        # Crear tablas
-        cursor.executescript("""
-            CREATE TABLE secretarias (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                name             TEXT    UNIQUE NOT NULL,
-                empleados        INTEGER NOT NULL DEFAULT 0,
-                votos_reportados INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE voto_history (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                secretaria_id INTEGER NOT NULL,
-                timestamp     TEXT    NOT NULL,
-                votos_sumados INTEGER NOT NULL,
-                FOREIGN KEY (secretaria_id) REFERENCES secretarias(id)
-            );
-        """)
+        CREATE TABLE secretarias (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            name             TEXT    UNIQUE NOT NULL,
+            empleados        INTEGER NOT NULL DEFAULT 0,
+            votos_reportados INTEGER NOT NULL DEFAULT 0
+        );
         
-        # Insertar datos iniciales
-        cursor.executemany(
-            "INSERT INTO secretarias (name, empleados) VALUES (?, ?)",
-            SECRETARIAS_INICIALES
-        )
-        conn.commit()
-        print(f"Base de datos creada con {len(SECRETARIAS_INICIALES)} secretarías")
-    else:
-        print("Base de datos ya existente. Verificando integridad...")
-        # Verificar que hay datos
-        count = cursor.execute("SELECT COUNT(*) FROM secretarias").fetchone()[0]
-        print(f"Secretarías encontradas: {count}")
+        CREATE TABLE voto_history (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            secretaria_id INTEGER NOT NULL,
+            timestamp     TEXT    NOT NULL,
+            votos_sumados INTEGER NOT NULL,
+            FOREIGN KEY (secretaria_id) REFERENCES secretarias(id)
+        );
+    """)
     
+    # Insertar datos iniciales
+    cursor.executemany(
+        "INSERT INTO secretarias (name, empleados) VALUES (?, ?)",
+        SECRETARIAS_INICIALES
+    )
+    
+    conn.commit()
     conn.close()
-    return True
+    print("✅ Base de datos inicializada correctamente")
 
-# Ejecutar inicialización AL ARRANCAR LA APLICACIÓN
-init_database()
+# EJECUTAR INICIALIZACIÓN
+init_db()
 
 # ──────────────────────────────────────────────
-# BASE DE DATOS (para requests)
+# FUNCIÓN PARA OBTENER BD
 # ──────────────────────────────────────────────
 def get_db():
     db = getattr(g, '_database', None)
@@ -115,7 +107,7 @@ def close_connection(exception):
         db.close()
 
 # ──────────────────────────────────────────────
-# RUTAS (igual que antes)
+# RUTAS
 # ──────────────────────────────────────────────
 @app.route('/')
 def index():
@@ -123,4 +115,125 @@ def index():
     secretarias = db.execute("SELECT name FROM secretarias ORDER BY name").fetchall()
     return render_template('index.html', secretarias=[r['name'] for r in secretarias])
 
-# ... (todas las demás rutas igual que antes, sin cambios) ...
+@app.route('/secretaria/<name>')
+def secretaria(name):
+    db = get_db()
+    row = db.execute("SELECT * FROM secretarias WHERE name = ?", (name,)).fetchone()
+    if not row:
+        return "Secretaría no encontrada", 404
+    history = db.execute(
+        "SELECT * FROM voto_history WHERE secretaria_id = ? ORDER BY timestamp DESC",
+        (row['id'],)
+    ).fetchall()
+    votos_faltantes = row['empleados'] - row['votos_reportados']
+    return render_template('secretaria.html',
+                           secretaria_name=name,
+                           data=dict(row),
+                           votos_faltantes=votos_faltantes,
+                           voto_history=[dict(h) for h in history])
+
+@app.route('/update_votos/<name>', methods=['POST'])
+def update_votos(name):
+    db = get_db()
+    row = db.execute("SELECT * FROM secretarias WHERE name = ?", (name,)).fetchone()
+    if not row:
+        return jsonify({"status": "error", "message": "Secretaría no encontrada."}), 404
+    try:
+        votos_a_sumar = int(request.form['votos'])
+        if votos_a_sumar < 0:
+            return jsonify({"status": "error", "message": "Los votos no pueden ser negativos."}), 400
+        new_total = row['votos_reportados'] + votos_a_sumar
+        if new_total > row['empleados']:
+            return jsonify({"status": "error", "message": "La cantidad de votos excede el total de empleados."}), 400
+
+        db.execute("UPDATE secretarias SET votos_reportados = ? WHERE id = ?", (new_total, row['id']))
+        db.execute(
+            "INSERT INTO voto_history (secretaria_id, timestamp, votos_sumados) VALUES (?, ?, ?)",
+            (row['id'], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), votos_a_sumar)
+        )
+        db.commit()
+
+        history = db.execute(
+            "SELECT * FROM voto_history WHERE secretaria_id = ? ORDER BY timestamp DESC",
+            (row['id'],)
+        ).fetchall()
+        return jsonify({"status": "success", "new_votos": new_total,
+                        "voto_history": [dict(h) for h in history]})
+    except ValueError:
+        return jsonify({"status": "error", "message": "Cantidad de votos inválida."}), 400
+
+@app.route('/delete_voto_entry/<name>/<int:entry_id>', methods=['POST'])
+def delete_voto_entry(name, entry_id):
+    db = get_db()
+    row = db.execute("SELECT * FROM secretarias WHERE name = ?", (name,)).fetchone()
+    if not row:
+        return jsonify({"status": "error", "message": "Secretaría no encontrada."}), 404
+    entry = db.execute(
+        "SELECT * FROM voto_history WHERE id = ? AND secretaria_id = ?",
+        (entry_id, row['id'])
+    ).fetchone()
+    if not entry:
+        return jsonify({"status": "error", "message": "Entrada no encontrada."}), 404
+
+    db.execute("DELETE FROM voto_history WHERE id = ?", (entry_id,))
+    total = db.execute(
+        "SELECT COALESCE(SUM(votos_sumados),0) FROM voto_history WHERE secretaria_id = ?",
+        (row['id'],)
+    ).fetchone()[0]
+    db.execute("UPDATE secretarias SET votos_reportados = ? WHERE id = ?", (total, row['id']))
+    db.commit()
+
+    history = db.execute(
+        "SELECT * FROM voto_history WHERE secretaria_id = ? ORDER BY timestamp DESC",
+        (row['id'],)
+    ).fetchall()
+    return jsonify({"status": "success", "new_votos": total,
+                    "voto_history": [dict(h) for h in history]})
+
+@app.route('/grafico_general')
+def grafico_general():
+    db = get_db()
+    row = db.execute(
+        "SELECT SUM(empleados) as te, SUM(votos_reportados) as tv FROM secretarias"
+    ).fetchone()
+    te, tv = row['te'] or 0, row['tv'] or 0
+    return render_template('grafico_general.html',
+                           total_empleados=te,
+                           total_votos_reportados=tv,
+                           votos_faltantes=te - tv)
+
+@app.route('/empleados_geb')
+def empleados_geb():
+    db = get_db()
+    rows = db.execute("SELECT * FROM secretarias ORDER BY name").fetchall()
+    secretarias_data = {r['name']: dict(r) for r in rows}
+    total_general = sum(r['empleados'] for r in rows)
+    return render_template('empleados_geb.html',
+                           secretarias_data=secretarias_data,
+                           total_general=total_general)
+
+@app.route('/update_empleados/<name>', methods=['POST'])
+def update_empleados(name):
+    db = get_db()
+    row = db.execute("SELECT * FROM secretarias WHERE name = ?", (name,)).fetchone()
+    if not row:
+        return jsonify({"status": "error", "message": "Secretaría no encontrada."}), 404
+    try:
+        new_emp = int(request.form['empleados'])
+        if new_emp < 0:
+            return jsonify({"status": "error", "message": "No puede ser negativo."}), 400
+        new_votos = min(row['votos_reportados'], new_emp)
+        db.execute(
+            "UPDATE secretarias SET empleados = ?, votos_reportados = ? WHERE id = ?",
+            (new_emp, new_votos, row['id'])
+        )
+        db.commit()
+        total = db.execute("SELECT SUM(empleados) FROM secretarias").fetchone()[0]
+        return jsonify({"status": "success", "new_empleados": new_emp,
+                        "total_general": total,
+                        "message": "Actualizado exitosamente."})
+    except ValueError:
+        return jsonify({"status": "error", "message": "Valor inválido."}), 400
+
+if __name__ == '__main__':
+    app.run(debug=True)
