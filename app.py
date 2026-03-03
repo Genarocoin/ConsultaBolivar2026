@@ -1,10 +1,18 @@
-# app.py
+# app.py (modificado)
+
 import sqlite3
+import os
 from flask import Flask, render_template, request, jsonify, g
 from datetime import datetime
 
 app = Flask(__name__)
-DATABASE = 'elecciones.db'
+
+# Configuración para producción
+if os.environ.get('RENDER'):  # Detecta si está en Render
+    # Usa una ruta persistente para la base de datos
+    DATABASE = '/tmp/elecciones.db'  # Render permite escritura en /tmp
+else:
+    DATABASE = 'elecciones.db'  # Local
 
 # Registrar Blueprint de exportación
 from export import export_bp
@@ -47,25 +55,26 @@ def get_db():
     if db is None:
         db = g._database = sqlite3.connect(DATABASE)
         db.row_factory = sqlite3.Row
+        # Inicializar la base de datos si no existe
+        init_db_if_needed(db)
     return db
 
-@app.teardown_appcontext
-def close_connection(exception):
-    db = getattr(g, '_database', None)
-    if db is not None:
-        db.close()
-
-def init_db():
-    with app.app_context():
-        db = get_db()
+def init_db_if_needed(db):
+    """Crea las tablas y datos iniciales si no existen"""
+    # Verificar si la tabla existe
+    cursor = db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='secretarias'"
+    )
+    if not cursor.fetchone():
+        # Crear tablas
         db.executescript("""
-            CREATE TABLE IF NOT EXISTS secretarias (
+            CREATE TABLE secretarias (
                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
                 name             TEXT    UNIQUE NOT NULL,
                 empleados        INTEGER NOT NULL DEFAULT 0,
                 votos_reportados INTEGER NOT NULL DEFAULT 0
             );
-            CREATE TABLE IF NOT EXISTS voto_history (
+            CREATE TABLE voto_history (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 secretaria_id INTEGER NOT NULL,
                 timestamp     TEXT    NOT NULL,
@@ -73,13 +82,18 @@ def init_db():
                 FOREIGN KEY (secretaria_id) REFERENCES secretarias(id)
             );
         """)
-        count = db.execute("SELECT COUNT(*) FROM secretarias").fetchone()[0]
-        if count == 0:
-            db.executemany(
-                "INSERT INTO secretarias (name, empleados) VALUES (?, ?)",
-                SECRETARIAS_INICIALES
-            )
+        # Insertar datos iniciales
+        db.executemany(
+            "INSERT INTO secretarias (name, empleados) VALUES (?, ?)",
+            SECRETARIAS_INICIALES
+        )
         db.commit()
+
+@app.teardown_appcontext
+def close_connection(exception):
+    db = getattr(g, '_database', None)
+    if db is not None:
+        db.close()
 
 # ──────────────────────────────────────────────
 # RUTAS
@@ -218,5 +232,4 @@ def update_empleados(name):
 
 
 if __name__ == '__main__':
-    init_db()
     app.run(debug=True)
